@@ -1,0 +1,89 @@
+---
+title: "Preregistration"
+format: html
+editor: visual
+---
+
+# load packages
+
+```{r}
+library(tidyverse)
+library(corrr)
+library(brms)
+
+```
+
+# Create correlation matrix
+
+# Modeling correlations
+
+##1. Gap correlations 
+### Reshapping
+
+Import gap correlations and rearrange to model
+
+```{r}
+library(readr)
+AHW_gap_cor <- read_csv("AHW_gap_cor.csv")
+AHW_gap_cor[1] <- NULL
+AHW_gap_cor<- as_cordf(AHW_gap_cor)
+AHW_gap_cor<- shave(AHW_gap_cor)
+AHW_gap_long <- AHW_gap_cor %>% 
+stretch() %>% 
+  mutate(x = as.numeric(x)) %>% 
+  mutate(y = as.numeric(y)) %>% 
+  mutate(gap = y-x)
+
+```
+
+
+Bring in sample sizes
+```{r}
+AHW_gap_samplesize <- read_csv("AHW_gap_samplesize.csv")
+AHW_gap_samplesize[1] <- NULL
+AHW_gap_samplesize<- as_cordf(AHW_gap_samplesize)
+AHW_gap_samplesize <- shave(AHW_gap_samplesize)
+AHW_gap_samplesize_long <- AHW_gap_samplesize %>% 
+stretch() %>% 
+  mutate(x = as.numeric(x)) %>% 
+  mutate(y = as.numeric(y)) %>% 
+  mutate(N = r) %>% 
+  select(-r)
+```
+
+merge dataset
+```{r}
+AHW_gap_long <- AHW_gap_long %>% 
+  left_join(AHW_gap_samplesize_long)
+```
+
+replace missing NA at gap 0 with 1s, all other NAs drop
+
+```{r}
+AHW_gap_long <- AHW_gap_long %>% 
+  filter(gap >= 0) %>% 
+  mutate(r = replace_na(r, 1)) # for modeling may need to filter out 0 gaps. 
+```
+
+### Meta-regression Modeling
+
+```{r}
+library(metafor)
+##gives sampling variances
+dd<- escalc(measure="COR", ri=r, ni=N, sei = SE, data = AHW_gap_long)
+## convert sampling variances in SD
+
+```
+
+
+
+### Plotting
+
+
+##2. Age correlations
+### Reshapping
+
+### Meta-regression Modeling
+
+### Plotting
+
