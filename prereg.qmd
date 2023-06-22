@@ -10,7 +10,9 @@ editor: visual
 library(tidyverse)
 library(corrr)
 library(brms)
-
+library(tidybayes)
+library(ggridges)
+library(modelr)
 ```
 
 # Create correlation matrix
@@ -61,23 +63,153 @@ replace missing NA at gap 0 with 1s, all other NAs drop
 
 ```{r}
 AHW_gap_long <- AHW_gap_long %>% 
-  filter(gap >= 0) %>% 
-  mutate(r = replace_na(r, 1)) # for modeling may need to filter out 0 gaps. 
+  filter(gap > 0) # %>% # change to >=0 if we want to include cor =1
+  #mutate(r = replace_na(r, 1)) # for modeling may need to filter out 0 gaps. 
 ```
 
-### Meta-regression Modeling
+calculate standard errors
 
 ```{r}
-library(metafor)
-##gives sampling variances
-dd<- escalc(measure="COR", ri=r, ni=N, sei = SE, data = AHW_gap_long)
-## convert sampling variances in SD
+library(psychometric) # note masks select function
+## convert r to Fishers R and calculate standard error
+AHW_gap_long <- AHW_gap_long%>% 
+  mutate(r.z = r2z(r)) %>% 
+  mutate(r.z.se = SEz(N))
+unloadNamespace("psychometric")
+## calculate standard error without fisher z scoring
+## SEs are similar when correlations are not large
+AHW_gap_long <- AHW_gap_long%>% 
+  mutate(r.se = (1-r^2)/sqrt(N-1))
 
 ```
 
+Check out relationship between standard error and correlation
+Funny how smaller correlations have larger SE, opposite of most pattersn in meta analysis
+```{r}
+AHW_gap_long %>% 
+  ggplot(aes(x = r.se, y = r)) +
+  geom_point()
+```
+
+
+### Meta Modeling
+
+meta analysis model
+```{r}
+AHW_gap <- 
+  brm(data = AHW_gap_long, 
+      family = gaussian,
+      r.z | se(r.z.se) ~ 1 + (1 | gap),
+      prior = c(prior(normal(0, 1), class = Intercept),
+                prior(cauchy(0,1), class = sd)),
+      iter = 4000, warmup = 2000, cores = 4, chains = 4, 
+      backend = "cmdstanr",
+      control = list(adapt_delta = .99, max_treedepth = 16))
+```
+
+```{r}
+summary(AHW_gap)
+```
+
+meta regression model
+Instead of nesting by gap, we can run a meta by nesting by estimate. To do so we need to create an index variable for each estimate
+
+```{r}
+AHW_gap_long <- AHW_gap_long %>% 
+mutate(estimate_id=row_number())
+```
+
+
+```{r}
+AHW_gap_x3 <- 
+  brm(data = AHW_gap_long, 
+      family = gaussian,
+      r.z | se(r.z.se) ~ 1 + (1 | gap) + (1 | estimate_id),
+      prior = c(prior(normal(0, 1), class = Intercept),
+                prior(cauchy(0,1), class = sd)),
+      iter = 4000, warmup = 2000, cores = 4, chains = 4, 
+      backend = "cmdstanr",
+      control = list(adapt_delta = .99, max_treedepth = 16))
+```
+
+
+```{r}
+summary(AHW_gap_x3)
+```
+
+
+```{r}
+summary(AHW_gap_x2)
+```
+
+```{r}
+summary(AHW_gap_x2)
+```
+
+
+```{r}
+AHW_gap_x4 <- 
+  brm(data = AHW_gap_long, 
+      family = gaussian,
+      r.z | se(r.z.se) ~ 1 + gap + (1 | gap) + (1 | estimate_id),
+      prior = c(prior(normal(0, 1), class = Intercept),
+                prior(cauchy(0,1), class = sd)),
+      iter = 4000, warmup = 2000, cores = 4, chains = 4, 
+      backend = "cmdstanr",
+      control = list(adapt_delta = .99, max_treedepth = 16))
+```
+
+
+
+```{r}
+summary(AHW_gap_x4)
+```
 
 
 ### Plotting
+
+Forest plot
+```{r}
+library(psychometric)
+AHW_gap_post <- AHW_gap %>%
+  spread_draws(b_Intercept, r_gap[gap,]) %>%
+  mutate(r = b_Intercept + r_gap) %>%
+  mutate(pooled = z2r(b_Intercept)) %>% 
+  mutate(r = z2r(r))   
+unloadNamespace("psychometric")
+
+
+AHW_gap_post.summary <- AHW_gap_post
+  group_by(AHW_gap_post, gap) %>% 
+  mean_qi(r)  
+
+
+AHW_gap_post %>% 
+  filter(gap <11) %>% 
+  mutate(gap = as.factor(gap)) %>% 
+  ggplot(aes(x = r, y = reorder(gap,r))) +
+  stat_halfeye(.width = .95, size = 2/3) 
+  
+```
+
+
+gap predictions
+
+```{r}
+library(psychometric)
+ AHW_gap_long %>% 
+  data_grid(gap = seq_range(gap, n = 36), .model = AHW_gap_long) %>% 
+  add_epred_draws(AHW_gap_x4) %>%
+  mutate(.epred = z2r(.epred)) %>%   
+  ggplot()+
+  aes(x = gap, y = .epred) +
+  stat_lineribbon(.width = 0.95, alpha = .5, show.legend = FALSE)+
+   scale_y_continuous(name = "correlation r", n.breaks = 12) +
+ scale_x_continuous(name = "time gap in years", n.breaks = 10) +
+ unloadNamespace("psychometric")
+```
+
+
 
 
 ##2. Age correlations
